@@ -54,16 +54,39 @@ function clearSession(ctx) {
   sessions.delete(userKey(ctx));
 }
 
+function parseMessageLink(input) {
+  const raw = String(input || "").trim();
+  const match = raw.match(/^https?:\/\/(?:www\.)?(?:t\.me|telegram\.me)\/([A-Za-z][A-Za-z0-9_]{4,31})\/(\d+)(?:[/?#].*)?$/i);
+  if (!match) {
+    throw new Error("Send a public Telegram message link like https://t.me/channelname/39.");
+  }
+  const messageId = Number(match[2]);
+  if (!Number.isSafeInteger(messageId) || messageId < 1) {
+    throw new Error("The message ID in that link is invalid.");
+  }
+  return {
+    chatId: "@" + match[1],
+    messageId,
+    url: raw
+  };
+}
+
 function parseChannel(input) {
   let value = String(input || "").trim();
   if (!value) throw new Error("Send a public channel link or @username.");
+
+  const messageLink = value.match(/^https?:\/\/(?:www\.)?(?:t\.me|telegram\.me)\/([A-Za-z][A-Za-z0-9_]{4,31})\/(\d+)(?:[/?#].*)?$/i);
+  if (messageLink) {
+    const replyTo = parseMessageLink(value);
+    return { channel: replyTo.chatId, replyTo };
+  }
 
   if (value.startsWith("@")) {
     value = value.slice(1);
   } else {
     value = value.replace(/^https?:\/\//i, "").replace(/^www\./i, "");
     if (!/^(t\.me|telegram\.me)\//i.test(value)) {
-      throw new Error("Use https://t.me/channelname or @channelname.");
+      throw new Error("Use https://t.me/channelname, a message link like https://t.me/channelname/39, or @channelname.");
     }
     value = value.replace(/^(t\.me|telegram\.me)\//i, "").split(/[/?#]/)[0];
   }
@@ -71,7 +94,7 @@ function parseChannel(input) {
   if (!/^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(value)) {
     throw new Error("Invalid public channel username. The destination must be public.");
   }
-  return "@" + value;
+  return { channel: "@" + value, replyTo: null };
 }
 
 function validateUrl(input) {
@@ -102,12 +125,29 @@ function preview(session) {
     "Button: " + session.buttonText,
     "URL: " + session.buttonUrl,
     "Color: " + COLOR_LABELS[session.color],
+    "Reply: " + (session.replyTo ? session.replyTo.chatId + " / message " + session.replyTo.messageId : "No reply"),
     "",
     "Message:",
     session.body || "(Button-only post, no visible text)",
     "",
     "Publish this post?"
   ].join("\n");
+}
+
+function previewKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: "Reply to message", callback_data: "pb:replylink" },
+        { text: "Reply to Channel created", callback_data: "pb:replycreated" }
+      ],
+      [
+        { text: "No reply", callback_data: "pb:noreply" },
+        { text: "Publish", callback_data: "pb:publish" }
+      ],
+      [{ text: "Cancel", callback_data: "pb:cancel" }]
+    ]
+  };
 }
 
 async function sendRichPost(session) {
@@ -135,7 +175,14 @@ async function sendRichPost(session) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       chat_id: session.channel,
-      rich_message: { blocks }
+      rich_message: { blocks },
+      ...(session.replyTo ? {
+        reply_parameters: {
+          chat_id: session.replyTo.chatId === session.channel ? undefined : session.replyTo.chatId,
+          message_id: session.replyTo.messageId,
+          allow_sending_without_reply: false
+        }
+      } : {})
     }),
     signal: AbortSignal.timeout(25000)
   });
@@ -198,10 +245,15 @@ bot.on("text", async (ctx, next) => {
 
   try {
     if (session.stage === "channel") {
-      session.channel = parseChannel(text);
+      const parsed = parseChannel(text);
+      session.channel = parsed.channel;
+      session.replyTo = parsed.replyTo;
       session.stage = "body";
       setSession(ctx, session);
-      return ctx.reply("Step 2 of 5\n\nSend the post text, or /skip for a button-only post.");
+      const replyNote = session.replyTo
+        ? "\\nDetected message link. This post will reply to message " + session.replyTo.messageId + " unless you change it in the preview."
+        : "";
+      return ctx.reply("Step 2 of 5\\n\\nSend the post text, or /skip for a button-only post." + replyNote);
     }
 
     if (session.stage === "body") {
@@ -243,8 +295,19 @@ bot.on("text", async (ctx, next) => {
       });
     }
 
+    if (session.stage === "replyLink" || session.stage === "replyCreatedLink") {
+      const target = parseMessageLink(text);
+      session.replyTo = target;
+      session.stage = "confirm";
+      setSession(ctx, session);
+      return ctx.reply(
+        (session.stage === "confirm" ? "Reply target saved.\\n\\n" : "") + preview(session),
+        { reply_markup: previewKeyboard() }
+      );
+    }
+
     if (session.stage === "confirm") {
-      return ctx.reply("Use Publish or Cancel in the preview.");
+      return ctx.reply("Use the preview buttons to change the reply target, publish, or cancel.");
     }
   } catch (error) {
     await ctx.reply("Input error: " + errorDescription(error) + "\n\nSend /post to start again.");
@@ -275,14 +338,26 @@ bot.on("callback_query", async (ctx, next) => {
       session.stage = "confirm";
       setSession(ctx, session);
 
-      return ctx.reply(preview(session), {
-        reply_markup: {
-          inline_keyboard: [[
-            { text: "Publish", callback_data: "pb:publish" },
-            { text: "Cancel", callback_data: "pb:cancel" }
-          ]]
-        }
-      });
+      return ctx.reply(preview(session), { reply_markup: previewKeyboard() });
+    }
+
+    if (data === "pb:replylink" || data === "pb:replycreated") {
+      if (session.stage !== "confirm") return ctx.reply("Finish the draft first.");
+      session.stage = data === "pb:replycreated" ? "replyCreatedLink" : "replyLink";
+      setSession(ctx, session);
+      if (data === "pb:replycreated") {
+        return ctx.reply(
+          "Send the direct link to the channel's \\"Channel created\\" service message. Telegram does not let bots search old channel history automatically, so this message link is needed once."
+        );
+      }
+      return ctx.reply("Send the direct link to the message this post should reply to, for example https://t.me/channelname/39.");
+    }
+
+    if (data === "pb:noreply") {
+      if (session.stage !== "confirm") return ctx.reply("This draft is not ready.");
+      session.replyTo = null;
+      setSession(ctx, session);
+      return ctx.reply(preview(session), { reply_markup: previewKeyboard() });
     }
 
     if (data === "pb:cancel") {
