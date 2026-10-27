@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: post-builder
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BOT_TOKEN
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: ADMIN_IDS
+        sync: false
