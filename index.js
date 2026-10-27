@@ -1,5 +1,5 @@
 const express = require("express");
-const { Telegraf, webhookCallback } = require("telegraf");
+const { Telegraf } = require("telegraf");
 const crypto = require("crypto");
 
 const TOKEN = process.env.BOT_TOKEN;
@@ -317,7 +317,15 @@ app.get("/health", (_req, res) => {
   res.status(200).json({ ok: true });
 });
 
-app.use(webhookPath, express.json({ limit: "1mb" }), webhookCallback(bot, "express"));
+app.post(webhookPath, express.json({ limit: "1mb" }), async (req, res) => {
+  try {
+    await bot.handleUpdate(req.body);
+    res.sendStatus(200);
+  } catch (error) {
+    console.error("Webhook update failed:", errorDescription(error));
+    res.sendStatus(500);
+  }
+});
 
 app.listen(PORT, "0.0.0.0", async () => {
   console.log("Post Builder listening on port " + PORT);
