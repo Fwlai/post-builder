@@ -310,6 +310,10 @@ bot.on("text", async (ctx, next) => {
       return ctx.reply("Use the preview buttons to change the reply target, publish, or cancel.");
     }
   } catch (error) {
+    if (session.stage === "replyLink" || session.stage === "replyCreatedLink") {
+      await ctx.reply("Reply link error: " + errorDescription(error) + "\n\nSend a valid public message link, or use /cancel to discard the draft.");
+      return;
+    }
     await ctx.reply("Input error: " + errorDescription(error) + "\n\nSend /post to start again.");
     clearSession(ctx);
   }
