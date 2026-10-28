@@ -301,7 +301,7 @@ bot.on("text", async (ctx, next) => {
       session.stage = "confirm";
       setSession(ctx, session);
       return ctx.reply(
-        (session.stage === "confirm" ? "Reply target saved.\\n\\n" : "") + preview(session),
+        "Reply target saved.\n\n" + preview(session),
         { reply_markup: previewKeyboard() }
       );
     }
@@ -351,7 +351,7 @@ bot.on("callback_query", async (ctx, next) => {
       setSession(ctx, session);
       if (data === "pb:replycreated") {
         return ctx.reply(
-          "Send the direct link to the channel's \\"Channel created\\" service message. Telegram does not let bots search old channel history automatically, so this message link is needed once."
+          "Send the direct link to the channel's Channel created service message. Telegram does not let bots search old channel history automatically, so this message link is needed once."
         );
       }
       return ctx.reply("Send the direct link to the message this post should reply to, for example https://t.me/channelname/39.");
