@@ -251,9 +251,9 @@ bot.on("text", async (ctx, next) => {
       session.stage = "body";
       setSession(ctx, session);
       const replyNote = session.replyTo
-        ? "\\nDetected message link. This post will reply to message " + session.replyTo.messageId + " unless you change it in the preview."
+        ? "\nDetected message link. This post will reply to message " + session.replyTo.messageId + " unless you change it in the preview."
         : "";
-      return ctx.reply("Step 2 of 5\\n\\nSend the post text, or /skip for a button-only post." + replyNote);
+      return ctx.reply("Step 2 of 5\n\nSend the post text, or /skip for a button-only post." + replyNote);
     }
 
     if (session.stage === "body") {
