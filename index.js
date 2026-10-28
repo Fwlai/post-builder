@@ -139,12 +139,9 @@ function previewKeyboard() {
     inline_keyboard: [
       [
         { text: "Reply to message", callback_data: "pb:replylink" },
-        { text: "Reply to Channel created", callback_data: "pb:replycreated" }
+        { text: "No reply", callback_data: "pb:noreply" }
       ],
-      [
-        { text: "No reply", callback_data: "pb:noreply" },
-        { text: "Publish", callback_data: "pb:publish" }
-      ],
+      [{ text: "Publish", callback_data: "pb:publish" }],
       [{ text: "Cancel", callback_data: "pb:cancel" }]
     ]
   };
@@ -295,7 +292,7 @@ bot.on("text", async (ctx, next) => {
       });
     }
 
-    if (session.stage === "replyLink" || session.stage === "replyCreatedLink") {
+    if (session.stage === "replyLink") {
       const target = parseMessageLink(text);
       session.replyTo = target;
       session.stage = "confirm";
@@ -310,7 +307,7 @@ bot.on("text", async (ctx, next) => {
       return ctx.reply("Use the preview buttons to change the reply target, publish, or cancel.");
     }
   } catch (error) {
-    if (session.stage === "replyLink" || session.stage === "replyCreatedLink") {
+    if (session.stage === "replyLink") {
       await ctx.reply("Reply link error: " + errorDescription(error) + "\n\nSend a valid public message link, or use /cancel to discard the draft.");
       return;
     }
@@ -345,15 +342,10 @@ bot.on("callback_query", async (ctx, next) => {
       return ctx.reply(preview(session), { reply_markup: previewKeyboard() });
     }
 
-    if (data === "pb:replylink" || data === "pb:replycreated") {
+    if (data === "pb:replylink") {
       if (session.stage !== "confirm") return ctx.reply("Finish the draft first.");
-      session.stage = data === "pb:replycreated" ? "replyCreatedLink" : "replyLink";
+      session.stage = "replyLink";
       setSession(ctx, session);
-      if (data === "pb:replycreated") {
-        return ctx.reply(
-          "Send the direct link to the channel's Channel created service message. Telegram does not let bots search old channel history automatically, so this message link is needed once."
-        );
-      }
       return ctx.reply("Send the direct link to the message this post should reply to, for example https://t.me/channelname/39.");
     }
 
