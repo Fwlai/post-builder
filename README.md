@@ -45,7 +45,7 @@ In a private chat with the bot:
 7. Choose button color
 8. Review the preview and press Publish
 
-For `/post2`, send the destination channel, then send photos until you use `/done` or the inline Done button. Choose whether to add a description or skip it, review, then publish. A Telegram media group supports at most 10 photos, so collections with more than 10 photos are sent as consecutive albums. Telegram attaches the description to the first photo only; the Bot API does not provide a container-level quote around an entire media group, so the quote styling applies to the caption where Telegram accepts it.\n\nThe bot must be an administrator in the destination channel with permission to publish messages.
+For `/post2`, send the destination channel, then send photos until you use `/done` or the inline Done button. Choose whether to add a description or skip it, review, then publish. The slideshow is sent as a Telegram Rich Message slideshow block nested inside a block quotation, with an optional slideshow caption. Rich Messages currently support up to 50 media attachments per message.\n\nThe bot must be an administrator in the destination channel with permission to publish messages.
 
 ## Notes
 
