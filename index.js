@@ -284,7 +284,7 @@ bot.start(async (ctx) => {
     "/done - Finish collecting slideshow photos\n" +
     "/undo - Remove the last collected slideshow photo\n" +
     "/cancel - Cancel the current draft\n\n" +
-    "Choose the channel, post text, button text, URL and button color for every post."
+    "Use /post to build a URL-button post or /post2 to build a quoted photo slideshow."
   );
 });
 
@@ -316,8 +316,7 @@ bot.command("post2", async (ctx) => {
     stage: "albumChannel",
     channel: "",
     photoFileIds: [],
-    description: "",
-    descriptionMode: null
+    description: ""
   });
 
   await ctx.reply(
@@ -379,7 +378,13 @@ bot.on("photo", async (ctx, next) => {
   return ctx.reply(
     "Photo " + session.photoFileIds.length + " added. " +
     (session.photoFileIds.length >= 50 ? "The 50-photo limit is reached. Use /done or /undo." : "Send more photos, /undo to remove the last one, or /done to finish."),
-    { reply_markup: { inline_keyboard: [[{ text: "Done, continue", callback_data: "pb2:done" }], [{ text: "Cancel", callback_data: "pb2:cancel" }]] } }
+    { reply_markup: { inline_keyboard: [
+      [
+        { text: "Done, continue", callback_data: "pb2:done" },
+        { text: "Undo last photo", callback_data: "pb2:undo" }
+      ],
+      [{ text: "Cancel", callback_data: "pb2:cancel" }]
+    ] } }
   );
 });
 
@@ -408,7 +413,7 @@ bot.on("text", async (ctx, next) => {
     }
 
     if (session.stage === "albumDescription") {
-      if (text.length > 1024) return ctx.reply("Description must be 1024 characters or fewer. Send a shorter description or /skip.");
+      if ([...text].length > 1024) return ctx.reply("Description must be 1024 characters or fewer. Send a shorter description or /skip.");
       session.description = /^\/skip(?:@\w+)?$/i.test(text) ? "" : text;
       session.stage = "albumConfirm";
       setSession(ctx, session);
@@ -503,7 +508,7 @@ bot.on("callback_query", async (ctx, next) => {
     if (!isAllowed(ctx)) return;
 
     const session = getSession(ctx);
-    if (!session) return ctx.reply("Draft expired. Send /post to start again.");
+    if (!session) return ctx.reply("Draft expired. Send /post or /post2 to start again.");
 
 
     if (data.startsWith("pb2:")) {
