@@ -12,6 +12,8 @@ A Telegram bot for publishing channel posts with colored Rich Message URL button
 - Preview and confirmation before publishing
 - Direct Bot API `sendRichMessage` call, with Telegram error details shown in the chat
 - Optional user allowlist via `ADMIN_IDS`
+- `/post2` photo slideshow builder with optional description and inline Done/Cancel controls
+- Photo collections are published as Telegram albums in groups of up to 10 photos
 
 ## Render setup
 
@@ -35,7 +37,7 @@ The bot configures its Telegram webhook on startup. Do not run another polling p
 In a private chat with the bot:
 
 1. Send `/start`
-2. Send `/post`
+2. Send `/post` for a button post, or `/post2` for a photo slideshow
 3. Enter a public channel username/link
 4. Enter post text or `/skip`
 5. Enter button label
@@ -43,7 +45,7 @@ In a private chat with the bot:
 7. Choose button color
 8. Review the preview and press Publish
 
-The bot must be an administrator in the destination channel with permission to publish messages.
+For `/post2`, send the destination channel, then send photos until you use `/done` or the inline Done button. Choose whether to add a description or skip it, review, then publish. A Telegram media group supports at most 10 photos, so collections with more than 10 photos are sent as consecutive albums. Telegram attaches the description to the first photo only; the Bot API does not provide a container-level quote around an entire media group, so the quote styling applies to the caption where Telegram accepts it.\n\nThe bot must be an administrator in the destination channel with permission to publish messages.
 
 ## Notes
 
