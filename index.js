@@ -321,7 +321,7 @@ bot.on("text", async (ctx, next) => {
         "\nPhotos: " + session.photoFileIds.length +
         "\nAlbums: " + Math.ceil(session.photoFileIds.length / 10) +
         "\nDescription: " + (session.description || "(none)") +
-        "\n\nThe description will be attached to the first photo. The photo group(s) will be sent as Telegram albums, with a quote-style caption where supported. Publish?",
+        "\n\nThe slideshow will be sent as a Rich Message inside a block quote. The optional description will be the slideshow caption. Publish?",
         { reply_markup: { inline_keyboard: [[{ text: "Publish", callback_data: "pb2:publish" }], [{ text: "Cancel", callback_data: "pb2:cancel" }]] } }
       );
     }
@@ -455,31 +455,43 @@ bot.on("callback_query", async (ctx, next) => {
       }
       if (data === "pb2:publish") {
         if (session.stage !== "albumConfirm") return ctx.reply("This slideshow is not ready to publish.");
+        if (!session.photoFileIds.length) return ctx.reply("Add at least one photo first.");
+        if (session.photoFileIds.length > 50) return ctx.reply("Telegram Rich Messages currently allow up to 50 media attachments in one message. Remove some photos before publishing.");
+
+        const slideshow = {
+          type: "slideshow",
+          blocks: session.photoFileIds.map((fileId) => ({
+            type: "photo",
+            photo: { media: fileId }
+          }))
+        };
+        if (session.description) slideshow.caption = { text: session.description };
+
+        const richMessage = {
+          blocks: [{
+            type: "blockquote",
+            blocks: [slideshow]
+          }]
+        };
+
         try {
-          const ids = session.photoFileIds;
-          if (ids.length === 1) {
-            const payload = { chat_id: session.channel, photo: ids[0] };
-            if (session.description) {
-              payload.caption = session.description;
-              payload.caption_entities = [{ type: "blockquote", offset: 0, length: session.description.length }];
-            }
-            await bot.telegram.callApi("sendPhoto", payload);
-          } else {
-            for (let i = 0; i < ids.length; i += 10) {
-              const chunk = ids.slice(i, i + 10);
-              const media = chunk.map((file_id, index) => {
-                const item = { type: "photo", media: file_id };
-                if (i === 0 && index === 0 && session.description) {
-                  item.caption = session.description;
-                  item.caption_entities = [{ type: "blockquote", offset: 0, length: session.description.length }];
-                }
-                return item;
-              });
-              await bot.telegram.callApi("sendMediaGroup", { chat_id: session.channel, media });
-            }
+          const response = await fetch("https://api.telegram.org/bot" + TOKEN + "/sendRichMessage", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ chat_id: session.channel, rich_message: richMessage }),
+            signal: AbortSignal.timeout(30000)
+          });
+          let data;
+          try {
+            data = await response.json();
+          } catch {
+            throw new Error("Telegram returned a non-JSON response (HTTP " + response.status + ").");
+          }
+          if (!response.ok || !data.ok) {
+            throw new Error("Telegram API " + response.status + ": " + (data.description || "Unknown API error"));
           }
           clearSession(ctx);
-          return ctx.reply("Slideshow published to " + session.channel + " (" + ids.length + " photo(s)).");
+          return ctx.reply("Rich slideshow published to " + session.channel + " (" + session.photoFileIds.length + " photo(s)).");
         } catch (error) {
           return ctx.reply("Publishing failed:\n\n" + errorDescription(error) + "\n\nYour slideshow draft has been kept. Press Publish to retry or send /cancel.");
         }
