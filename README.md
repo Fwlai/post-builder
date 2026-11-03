@@ -12,8 +12,9 @@ A Telegram bot for publishing channel posts with colored Rich Message URL button
 - Preview and confirmation before publishing
 - Direct Bot API `sendRichMessage` call, with Telegram error details shown in the chat
 - Optional user allowlist via `ADMIN_IDS`
-- `/post2` photo slideshow builder with optional description and inline Done/Cancel controls
-- Photo collections are published as Telegram albums in groups of up to 10 photos
+- `/post2` photo slideshow builder with an optional description and inline Done/Cancel controls
+- Each `/post2` draft is published as exactly one `sendRichMessage` containing one `blockquote` with one nested `slideshow` block
+- Each slideshow photo is an `InputRichBlockPhoto` using the photo's Telegram `file_id`; the Rich Message is limited to 50 media attachments
 
 ## Render setup
 
@@ -45,7 +46,9 @@ In a private chat with the bot:
 7. Choose button color
 8. Review the preview and press Publish
 
-For `/post2`, send the destination channel, then send photos until you use `/done` or the inline Done button. Choose whether to add a description or skip it, review, then publish. The slideshow is sent as a Telegram Rich Message slideshow block nested inside a block quotation, with an optional slideshow caption. Rich Messages currently support up to 50 media attachments per message.\n\nThe bot must be an administrator in the destination channel with permission to publish messages.
+For `/post2`, send the destination channel, then send up to 50 photos. Each photo is added to the same slideshow. Use `/undo` to remove the last photo, then `/done` or the inline Done button to finish. Choose whether to add a description or skip it, review, then publish. The bot sends exactly one Rich Message whose structure is `blockquote → slideshow → photo blocks`. The optional description is the slideshow caption. This is not a `sendMediaGroup` album and it does not split into multiple messages.
+
+The bot must be an administrator in the destination channel with permission to publish messages.
 
 ## Notes
 
