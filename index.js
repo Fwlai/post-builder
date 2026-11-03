@@ -164,11 +164,16 @@ function buildRichSlideshow(session) {
     throw new Error("A Telegram Rich Message can contain at most 50 media attachments.");
   }
 
+  const orderedPhotos = [...session.photoFileIds].sort((a, b) => a.messageId - b.messageId);
+  if (orderedPhotos.some((photo) => !photo || typeof photo.fileId !== "string" || !photo.fileId)) {
+    throw new Error("One or more collected photos are invalid. Remove the last photo or restart the slideshow.");
+  }
+
   const slideshow = {
     type: "slideshow",
-    blocks: session.photoFileIds.map((fileId) => ({
+    blocks: orderedPhotos.map((photo) => ({
       type: "photo",
-      photo: { type: "photo", media: fileId }
+      photo: { type: "photo", media: photo.fileId }
     }))
   };
 
@@ -202,7 +207,7 @@ async function sendRichSlideshow(session) {
     throw new Error("Telegram returned a non-JSON response (HTTP " + response.status + ").");
   }
 
-  if (!response.ok || !data.ok) {
+  if (!response.ok || !data || !data.ok) {
     throw new Error("Telegram API " + response.status + ": " + ((data && data.description) || "Unknown API error"));
   }
   if (!data.result) {
@@ -373,7 +378,8 @@ bot.on("photo", async (ctx, next) => {
   const photos = ctx.message.photo || [];
   const largest = photos[photos.length - 1];
   if (!largest || !largest.file_id) return ctx.reply("I couldn't read that photo. Please send it again.");
-  session.photoFileIds.push(largest.file_id);
+  session.photoFileIds.push({ messageId: ctx.message.message_id, fileId: largest.file_id });
+  session.photoFileIds.sort((a, b) => a.messageId - b.messageId);
   setSession(ctx, session);
   return ctx.reply(
     "Photo " + session.photoFileIds.length + " added. " +
