@@ -202,7 +202,9 @@ bot.start(async (ctx) => {
   if (!isAllowed(ctx)) return ctx.reply("You are not authorized to use this bot.");
   await ctx.reply(
     "Post Builder\n\n" +
-    "/post - Create a channel post\n" +
+    "/post - Create a channel post with a URL button\n" +
+    "/post2 - Build a photo slideshow for a channel\n" +
+    "/done - Finish collecting slideshow photos\n" +
     "/cancel - Cancel the current draft\n\n" +
     "Choose the channel, post text, button text, URL and button color for every post."
   );
@@ -227,6 +229,64 @@ bot.command("post", async (ctx) => {
   );
 });
 
+
+bot.command("post2", async (ctx) => {
+  if (ctx.chat.type !== "private") return ctx.reply("Use this command in a private chat.");
+  if (!isAllowed(ctx)) return ctx.reply("You are not authorized to use this bot.");
+
+  setSession(ctx, {
+    stage: "albumChannel",
+    channel: "",
+    photoFileIds: [],
+    description: "",
+    descriptionMode: null
+  });
+
+  await ctx.reply(
+    "Slideshow builder\n\nStep 1: Send the destination public channel link or @username.\n\n" +
+    "Then send as many photos as you want. Use /done or the Done button when finished. " +
+    "Telegram albums support up to 10 photos each, so larger collections will be published as consecutive albums."
+  );
+});
+
+bot.command("done", async (ctx) => {
+  if (ctx.chat.type !== "private") return;
+  if (!isAllowed(ctx)) return ctx.reply("You are not authorized to use this bot.");
+  const session = getSession(ctx);
+  if (!session || session.stage !== "albumCollect") {
+    return ctx.reply("There is no slideshow currently collecting photos. Send /post2 to start.");
+  }
+  if (session.photoFileIds.length === 0) {
+    return ctx.reply("Send at least one photo before finishing.");
+  }
+  session.stage = "albumDescriptionChoice";
+  setSession(ctx, session);
+  return ctx.reply(
+    "Collected " + session.photoFileIds.length + " photo(s). Should the slideshow have a description?\n\n" +
+    "Choose Skip description or Add description.",
+    { reply_markup: { inline_keyboard: [[
+      { text: "Skip description", callback_data: "pb2:skipdesc" },
+      { text: "Add description", callback_data: "pb2:adddesc" }
+    ], [{ text: "Cancel", callback_data: "pb2:cancel" }]] } }
+  );
+});
+
+bot.on("photo", async (ctx, next) => {
+  if (ctx.chat.type !== "private" || !isAllowed(ctx)) return next();
+  const session = getSession(ctx);
+  if (!session || session.stage !== "albumCollect") return next();
+
+  const photos = ctx.message.photo || [];
+  const largest = photos[photos.length - 1];
+  if (!largest || !largest.file_id) return ctx.reply("I couldn't read that photo. Please send it again.");
+  session.photoFileIds.push(largest.file_id);
+  setSession(ctx, session);
+  return ctx.reply(
+    "Photo " + session.photoFileIds.length + " added. Send more photos or finish the slideshow.",
+    { reply_markup: { inline_keyboard: [[{ text: "Done, continue", callback_data: "pb2:done" }], [{ text: "Cancel", callback_data: "pb2:cancel" }]] } }
+  );
+});
+
 bot.command("cancel", async (ctx) => {
   clearSession(ctx);
   await ctx.reply("Draft cancelled.");
@@ -241,6 +301,35 @@ bot.on("text", async (ctx, next) => {
   if (text.startsWith("/") && !/^\/skip(?:@\w+)?$/i.test(text)) return next();
 
   try {
+
+    if (session.stage === "albumChannel") {
+      const parsed = parseChannel(text);
+      if (parsed.replyTo) throw new Error("For /post2, send a channel link or @username, not a specific message link.");
+      session.channel = parsed.channel;
+      session.stage = "albumCollect";
+      setSession(ctx, session);
+      return ctx.reply("Destination saved: " + session.channel + "\n\nNow send photos one by one or in batches. Use /done when you've sent them all.");
+    }
+
+    if (session.stage === "albumDescription") {
+      if (text.length > 1024) return ctx.reply("Description must be 1024 characters or fewer. Send a shorter description or /skip.");
+      session.description = /^\/skip(?:@\w+)?$/i.test(text) ? "" : text;
+      session.stage = "albumConfirm";
+      setSession(ctx, session);
+      return ctx.reply(
+        "SLIDESHOW PREVIEW\n\nChannel: " + session.channel +
+        "\nPhotos: " + session.photoFileIds.length +
+        "\nAlbums: " + Math.ceil(session.photoFileIds.length / 10) +
+        "\nDescription: " + (session.description || "(none)") +
+        "\n\nThe description will be attached to the first photo. The photo group(s) will be sent as Telegram albums, with a quote-style caption where supported. Publish?",
+        { reply_markup: { inline_keyboard: [[{ text: "Publish", callback_data: "pb2:publish" }], [{ text: "Cancel", callback_data: "pb2:cancel" }]] } }
+      );
+    }
+
+    if (session.stage === "albumConfirm") {
+      return ctx.reply("Use the preview buttons to publish or cancel this slideshow.");
+    }
+
     if (session.stage === "channel") {
       const parsed = parseChannel(text);
       session.channel = parsed.channel;
@@ -327,6 +416,75 @@ bot.on("callback_query", async (ctx, next) => {
 
     const session = getSession(ctx);
     if (!session) return ctx.reply("Draft expired. Send /post to start again.");
+
+
+    if (data.startsWith("pb2:")) {
+      if (data === "pb2:cancel") {
+        clearSession(ctx);
+        return ctx.reply("Slideshow cancelled.");
+      }
+      if (data === "pb2:done") {
+        if (session.stage !== "albumCollect") return ctx.reply("Photo collection is not active.");
+        if (!session.photoFileIds.length) return ctx.reply("Send at least one photo first.");
+        session.stage = "albumDescriptionChoice";
+        setSession(ctx, session);
+        return ctx.reply("Collected " + session.photoFileIds.length + " photo(s). Add a description or skip it?", {
+          reply_markup: { inline_keyboard: [[
+            { text: "Skip description", callback_data: "pb2:skipdesc" },
+            { text: "Add description", callback_data: "pb2:adddesc" }
+          ], [{ text: "Cancel", callback_data: "pb2:cancel" }]] }
+        });
+      }
+      if (data === "pb2:skipdesc" || data === "pb2:adddesc") {
+        if (session.stage !== "albumDescriptionChoice") return ctx.reply("Description choice is not active.");
+        if (data === "pb2:skipdesc") {
+          session.description = "";
+          session.stage = "albumConfirm";
+          setSession(ctx, session);
+          return ctx.reply(
+            "SLIDESHOW PREVIEW\n\nChannel: " + session.channel +
+            "\nPhotos: " + session.photoFileIds.length +
+            "\nAlbums: " + Math.ceil(session.photoFileIds.length / 10) +
+            "\nDescription: (none)\n\nPublish?",
+            { reply_markup: { inline_keyboard: [[{ text: "Publish", callback_data: "pb2:publish" }], [{ text: "Cancel", callback_data: "pb2:cancel" }]] } }
+          );
+        }
+        session.stage = "albumDescription";
+        setSession(ctx, session);
+        return ctx.reply("Send the slideshow description (up to 1024 characters), or /skip for no description.");
+      }
+      if (data === "pb2:publish") {
+        if (session.stage !== "albumConfirm") return ctx.reply("This slideshow is not ready to publish.");
+        try {
+          const ids = session.photoFileIds;
+          if (ids.length === 1) {
+            const payload = { chat_id: session.channel, photo: ids[0] };
+            if (session.description) {
+              payload.caption = session.description;
+              payload.caption_entities = [{ type: "blockquote", offset: 0, length: session.description.length }];
+            }
+            await bot.telegram.callApi("sendPhoto", payload);
+          } else {
+            for (let i = 0; i < ids.length; i += 10) {
+              const chunk = ids.slice(i, i + 10);
+              const media = chunk.map((file_id, index) => {
+                const item = { type: "photo", media: file_id };
+                if (i === 0 && index === 0 && session.description) {
+                  item.caption = session.description;
+                  item.caption_entities = [{ type: "blockquote", offset: 0, length: session.description.length }];
+                }
+                return item;
+              });
+              await bot.telegram.callApi("sendMediaGroup", { chat_id: session.channel, media });
+            }
+          }
+          clearSession(ctx);
+          return ctx.reply("Slideshow published to " + session.channel + " (" + ids.length + " photo(s)).");
+        } catch (error) {
+          return ctx.reply("Publishing failed:\n\n" + errorDescription(error) + "\n\nYour slideshow draft has been kept. Press Publish to retry or send /cancel.");
+        }
+      }
+    }
 
     if (data.startsWith("pb:color:")) {
       if (session.stage !== "color") return ctx.reply("This color selection is no longer active.");
