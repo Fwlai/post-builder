@@ -49,23 +49,21 @@ function escapeHtml(value) {
 }
 
 // Apply the allowlist before every command, message, and callback handler.
-// Unauthorized users are only notified when they send /start. Every /start
-// generates a separate, minimal notification for the primary owner.
+// Every /start except the primary owner's notifies the primary owner. The
+// secondary admin is still allowed through to the normal /start handler.
 bot.use(async (ctx, next) => {
-  if (ctx.chat && ctx.chat.type === "private" && ctx.from && !isAllowed(ctx)) {
+  if (ctx.chat && ctx.chat.type === "private" && ctx.from) {
     const messageText = ctx.message && ctx.message.text;
     const isStart = typeof messageText === "string" &&
       /^\/start(?:@\w+)?(?:\s|$)/i.test(messageText);
+    const currentUserId = userKey(ctx);
 
-    if (isStart) {
-      await ctx.reply("Sorry, This bot is private.");
-
-      const userId = String(ctx.from.id);
+    if (isStart && currentUserId !== "6530793575") {
       const displayName = [ctx.from.first_name, ctx.from.last_name]
         .filter(Boolean)
         .join(" ") || "Telegram user";
       const notification =
-        '<a href="tg://openmessage?user_id=' + userId + '">' +
+        '<a href="tg://openmessage?user_id=' + currentUserId + '">' +
         escapeHtml(displayName) +
         "</a> started the bot";
 
@@ -74,12 +72,18 @@ bot.use(async (ctx, next) => {
           parse_mode: "HTML"
         });
       } catch (error) {
-        console.error("Failed to send unauthorized /start notification:", errorDescription(error));
+        console.error("Failed to send /start notification to primary owner:", errorDescription(error));
       }
     }
 
-    return;
+    if (!isAllowed(ctx)) {
+      if (isStart) {
+        await ctx.reply("Sorry, This bot is private.");
+      }
+      return;
+    }
   }
+
   return next();
 });
 
