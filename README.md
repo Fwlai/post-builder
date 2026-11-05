@@ -11,7 +11,7 @@ A Telegram bot for publishing channel posts with colored Rich Message URL button
 - Choose green, blue, red, or no explicit button style
 - Preview and confirmation before publishing
 - Direct Bot API `sendRichMessage` call, with Telegram error details shown in the chat
-- Optional user allowlist via `ADMIN_IDS`
+- Private bot access restricted to Telegram user IDs `6530793575` and `5272351424`
 - `/post2` photo slideshow builder with an optional description and inline Done/Cancel controls
 - Each `/post2` draft is published as exactly one `sendRichMessage` containing one `blockquote` with one nested `slideshow` block
 - Each slideshow photo is an `InputRichBlockPhoto` using the photo's Telegram `file_id`; the Rich Message is limited to 50 media attachments
@@ -29,7 +29,8 @@ Set these environment variables in Render:
 - `BOT_TOKEN`: token from BotFather
 - `PUBLIC_URL`: full HTTPS service URL, for example `https://your-service.onrender.com`
 - `WEBHOOK_SECRET`: optional; Render Blueprint generates one automatically
-- `ADMIN_IDS`: optional comma-separated Telegram numeric user IDs. If omitted, anyone who opens the bot can use it.
+
+Only the two IDs listed above can use the bot. Unauthorized private-chat updates receive a short access-denied notice; after five seconds, the bot deletes that notice and attempts to delete the triggering message. Telegram does not allow bots to read or bulk-delete a private chat's entire message history, and deletion of a user's incoming message may be rejected by Telegram.
 
 The bot configures its Telegram webhook on startup. Do not run another polling process for the same bot token at the same time.
 
