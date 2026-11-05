@@ -6,12 +6,8 @@ const TOKEN = process.env.BOT_TOKEN;
 const PUBLIC_URL = String(process.env.PUBLIC_URL || "").replace(/\/$/, "");
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || crypto.randomBytes(24).toString("hex");
 const PORT = Number(process.env.PORT || 10000);
-const ADMIN_IDS = new Set(
-  String(process.env.ADMIN_IDS || "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean)
-);
+// Only these Telegram accounts may use the bot.
+const ADMIN_IDS = new Set(["6530793575", "5272351424"]);
 
 if (!TOKEN) {
   console.error("Missing BOT_TOKEN environment variable.");
@@ -39,8 +35,48 @@ function userKey(ctx) {
 }
 
 function isAllowed(ctx) {
-  return ADMIN_IDS.size === 0 || ADMIN_IDS.has(userKey(ctx));
+  return Boolean(ctx.from) && ADMIN_IDS.has(userKey(ctx));
 }
+
+async function denyAndCleanPrivateChat(ctx) {
+  const chatId = ctx.chat && ctx.chat.id;
+  if (!chatId) return;
+
+  let denialMessage;
+  try {
+    denialMessage = await ctx.reply(
+      "Access denied. This bot is private, and your account is not authorized."
+    );
+  } catch {
+    return;
+  }
+
+  // Telegram does not let bots enumerate or bulk-delete a private chat history.
+  // After five seconds, remove the denial and attempt to remove the triggering message.
+  const triggeringMessage = ctx.message || (ctx.callbackQuery && ctx.callbackQuery.message);
+  setTimeout(async () => {
+    try {
+      await ctx.telegram.deleteMessage(chatId, denialMessage.message_id);
+    } catch {}
+
+    if (triggeringMessage && triggeringMessage.message_id) {
+      try {
+        await ctx.telegram.deleteMessage(chatId, triggeringMessage.message_id);
+      } catch {
+        // Telegram may reject deletion of incoming private-chat messages.
+      }
+    }
+  }, 5000);
+}
+
+// Apply the allowlist before every command, message, and callback handler.
+bot.use(async (ctx, next) => {
+  if (ctx.chat && ctx.chat.type === "private" && ctx.from && !isAllowed(ctx)) {
+    await denyAndCleanPrivateChat(ctx);
+    return;
+  }
+  return next();
+});
 
 function getSession(ctx) {
   return sessions.get(userKey(ctx));
