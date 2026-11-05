@@ -15,5 +15,3 @@ services:
         sync: false
       - key: WEBHOOK_SECRET
         generateValue: true
-      - key: ADMIN_IDS
-        sync: false
