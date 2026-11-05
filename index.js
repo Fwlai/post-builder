@@ -38,41 +38,46 @@ function isAllowed(ctx) {
   return Boolean(ctx.from) && ADMIN_IDS.has(userKey(ctx));
 }
 
-async function denyAndCleanPrivateChat(ctx) {
-  const chatId = ctx.chat && ctx.chat.id;
-  if (!chatId) return;
-
-  let denialMessage;
-  try {
-    denialMessage = await ctx.reply(
-      "Access denied. This bot is private, and your account is not authorized."
-    );
-  } catch {
-    return;
-  }
-
-  // Telegram does not let bots enumerate or bulk-delete a private chat history.
-  // After five seconds, remove the denial and attempt to remove the triggering message.
-  const triggeringMessage = ctx.message || (ctx.callbackQuery && ctx.callbackQuery.message);
-  setTimeout(async () => {
-    try {
-      await ctx.telegram.deleteMessage(chatId, denialMessage.message_id);
-    } catch {}
-
-    if (triggeringMessage && triggeringMessage.message_id) {
-      try {
-        await ctx.telegram.deleteMessage(chatId, triggeringMessage.message_id);
-      } catch {
-        // Telegram may reject deletion of incoming private-chat messages.
-      }
-    }
-  }, 5000);
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  })[character]);
 }
 
 // Apply the allowlist before every command, message, and callback handler.
+// Unauthorized users are only notified when they send /start. Every /start
+// generates a separate, minimal notification for the primary owner.
 bot.use(async (ctx, next) => {
   if (ctx.chat && ctx.chat.type === "private" && ctx.from && !isAllowed(ctx)) {
-    await denyAndCleanPrivateChat(ctx);
+    const messageText = ctx.message && ctx.message.text;
+    const isStart = typeof messageText === "string" &&
+      /^\/start(?:@\w+)?(?:\s|$)/i.test(messageText);
+
+    if (isStart) {
+      await ctx.reply("Sorry, This bot is private.");
+
+      const userId = String(ctx.from.id);
+      const displayName = [ctx.from.first_name, ctx.from.last_name]
+        .filter(Boolean)
+        .join(" ") || "Telegram user";
+      const notification =
+        '<a href="tg://openmessage?user_id=' + userId + '">' +
+        escapeHtml(displayName) +
+        "</a> started the bot";
+
+      try {
+        await ctx.telegram.sendMessage("6530793575", notification, {
+          parse_mode: "HTML"
+        });
+      } catch (error) {
+        console.error("Failed to send unauthorized /start notification:", errorDescription(error));
+      }
+    }
+
     return;
   }
   return next();
