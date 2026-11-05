@@ -30,7 +30,7 @@ Set these environment variables in Render:
 - `PUBLIC_URL`: full HTTPS service URL, for example `https://your-service.onrender.com`
 - `WEBHOOK_SECRET`: optional; Render Blueprint generates one automatically
 
-Only the two IDs listed above can use the bot. When an unauthorized user sends `/start` in a private chat, the bot replies `Sorry, This bot is private.` and sends the primary owner (ID `6530793575`) a separate notification in the format `[Display Name](tg://openmessage?user_id=USER_ID) started the bot`. The linked display name opens that user's Telegram profile. Every `/start` generates a notification, including repeated starts. No messages are deleted. Other updates from unauthorized private users are ignored.
+Only the two IDs listed above can use the bot. When an unauthorized user sends `/start` in a private chat, the bot replies `Sorry, This bot is private.` and sends the primary owner (ID `6530793575`) a separate notification in the format `[Display Name](tg://openmessage?user_id=USER_ID) started the bot`. The secondary admin (ID `5272351424`) is also allowed to use the bot; each `/start` from that account sends the same notification to the primary owner before the normal welcome message. Every `/start` from a non-primary account generates a separate notification, including repeated starts. The primary owner does not receive a notification about their own `/start`. No messages are deleted. Other updates from unauthorized private users are ignored.
 
 The bot configures its Telegram webhook on startup. Do not run another polling process for the same bot token at the same time.
 
