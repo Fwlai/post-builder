@@ -115,13 +115,18 @@ function queuePersistence(owner, operation) {
 function setSession(ctx, session) {
   const owner = userKey(ctx);
   sessions.set(owner, session);
-  queuePersistence(owner, () => saveDraft(owner, session));
+  if (session.type !== "channel-management") {
+    queuePersistence(owner, () => saveDraft(owner, session));
+  }
 }
 
 function clearSession(ctx) {
   const owner = userKey(ctx);
+  const previous = sessions.get(owner);
   sessions.delete(owner);
-  queuePersistence(owner, () => deleteDraft(owner));
+  if (!previous || previous.type !== "channel-management") {
+    queuePersistence(owner, () => deleteDraft(owner));
+  }
 }
 
 async function showChannelPicker(ctx) {
@@ -398,9 +403,9 @@ bot.start(async (ctx) => {
     "/done - Finish collecting slideshow photos\n" +
     "/undo - Remove the last collected slideshow photo\n" +
     "/cancel - Cancel the current draft\n\n" +
-    "/post3 - Add text above a quoted photo slideshow\\n" +
-    "/channels - Manage your saved channels\\n" +
-    "/addchannel - Register a channel\\n\\n" +
+    "/post3 - Add text above a quoted photo slideshow\n" +
+    "/channels - Manage your saved channels\n" +
+    "/addchannel - Register a channel\n\n" +
     "Use /post, /post2, or /post3 to create a post."
   );
 });
@@ -438,10 +443,10 @@ bot.command("channels", async (ctx) => {
   if (ctx.chat.type !== "private" || !isAllowed(ctx)) return;
   const channels = await listChannels(userKey(ctx));
   if (!channels.length) return ctx.reply("No saved channels. Use /addchannel to add one.");
-  const lines = channels.map((c, i) => (i + 1) + ". " + c.title + (c.username ? " (" + c.username + ")" : "") + "\\nID: " + c.chat_id);
+  const lines = channels.map((c, i) => (i + 1) + ". " + c.title + (c.username ? " (" + c.username + ")" : "") + "\nID: " + c.chat_id);
   const rows = channels.map((c) => [{ text: "Delete " + c.title, callback_data: "ch:delete:" + c.id }]);
   rows.push([{ text: "Add channel", callback_data: "ch:add" }]);
-  await ctx.reply("Your saved channels:\\n\\n" + lines.join("\\n\\n"), { reply_markup: { inline_keyboard: rows } });
+  await ctx.reply("Your saved channels:\n\n" + lines.join("\n\n"), { reply_markup: { inline_keyboard: rows } });
 });
 
 bot.command("done", async (ctx) => {
@@ -537,7 +542,7 @@ bot.on("text", async (ctx, next) => {
       const username = chat.username ? "@" + chat.username : null;
       await addChannel(userKey(ctx), { chatId: chat.id, username, title: chat.title || username || String(chat.id) });
       clearSession(ctx);
-      return ctx.reply("Channel saved to this account: " + (chat.title || username) + "\\nNumeric chat ID stored: " + chat.id);
+      return ctx.reply("Channel saved to this account: " + (chat.title || username) + "\nNumeric chat ID stored: " + chat.id);
     }
 
     if (session.stage === "post3Text") {
@@ -673,9 +678,9 @@ bot.on("callback_query", async (ctx, next) => {
       session.stage = session.nextStage;
       delete session.nextStage;
       setSession(ctx, session);
-      if (session.type === "post") return ctx.reply("Destination: " + channel.title + "\\n\\nStep 1: Send the post text, or /skip for a button-only post.");
-      if (session.type === "post2") return ctx.reply("Destination: " + channel.title + "\\n\\nNow send up to 50 photos. Use /done when finished.");
-      return ctx.reply("Destination: " + channel.title + "\\n\\nChoose the format for the top text:", { reply_markup: { inline_keyboard: [[
+      if (session.type === "post") return ctx.reply("Destination: " + channel.title + "\n\nStep 1: Send the post text, or /skip for a button-only post.");
+      if (session.type === "post2") return ctx.reply("Destination: " + channel.title + "\n\nNow send up to 50 photos. Use /done when finished.");
+      return ctx.reply("Destination: " + channel.title + "\n\nChoose the format for the top text:", { reply_markup: { inline_keyboard: [[
         { text: "Plain text", callback_data: "pb3:plain" },
         { text: "Small heading (h6)", callback_data: "pb3:heading" }
       ], [{ text: "Cancel", callback_data: "ch:cancel" }]] } });
@@ -698,14 +703,14 @@ bot.on("callback_query", async (ctx, next) => {
         return ctx.reply("Slideshow cancelled.");
       }
       if (data === "pb2:undo") {
-        if (session.stage !== "albumCollect") return ctx.reply("Photo collection is not active.");
+        if (!["albumCollect", "post3Collect"].includes(session.stage)) return ctx.reply("Photo collection is not active.");
         if (!session.photoFileIds.length) return ctx.reply("There are no photos to remove.");
         session.photoFileIds.pop();
         setSession(ctx, session);
         return ctx.reply("Removed the last photo. " + session.photoFileIds.length + " photo(s) remain.");
       }
       if (data === "pb2:done") {
-        if (session.stage !== "albumCollect") return ctx.reply("Photo collection is not active.");
+        if (!["albumCollect", "post3Collect"].includes(session.stage)) return ctx.reply("Photo collection is not active.");
         if (!session.photoFileIds.length) return ctx.reply("Send at least one photo first.");
         session.stage = "albumDescriptionChoice";
         setSession(ctx, session);
