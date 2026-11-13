@@ -4,7 +4,7 @@ A Telegram bot for publishing channel posts with colored Rich Message URL button
 
 ## Features
 
-- Choose the public destination channel for each post using `@username` or `https://t.me/username`
+- Register destination channels by public `@username`; the bot resolves and stores each numeric Telegram chat ID
 - Optional post text; use `/skip` for a button-only Rich Message
 - Choose the button label and destination URL every time
 - Supports HTTP/HTTPS URLs, including Telegram invite links such as `https://t.me/+...`
@@ -13,6 +13,9 @@ A Telegram bot for publishing channel posts with colored Rich Message URL button
 - Direct Bot API `sendRichMessage` call, with Telegram error details shown in the chat
 - Private bot access restricted to Telegram user IDs `6530793575` and `5272351424`
 - `/post2` photo slideshow builder with an optional description and inline Done/Cancel controls
+- `/post3` text-plus-slideshow builder with paragraph or h6 heading above a quoted slideshow
+- Per-account saved channel workspaces using numeric Telegram chat IDs
+- Persistent drafts stored in Supabase and restored after Render restarts
 - Each `/post2` draft is published as exactly one `sendRichMessage` containing one `blockquote` with one nested `slideshow` block
 - Each slideshow photo is an `InputRichBlockPhoto` using the photo's Telegram `file_id`; the Rich Message is limited to 50 media attachments
 
@@ -38,21 +41,41 @@ The bot configures its Telegram webhook on startup. Do not run another polling p
 
 In a private chat with the bot:
 
-1. Send `/start`
-2. Send `/post` for a button post, or `/post2` for a photo slideshow
-3. Enter a public channel username/link
-4. Enter post text or `/skip`
-5. Enter button label
-6. Enter button URL
-7. Choose button color
-8. Review the preview and press Publish
+1. Send `/start`.
+2. Register each destination with `/addchannel` using its public `@username`. The bot must be an administrator with posting permission.
+3. Use `/channels` to review saved destinations.
+4. Send `/post`, `/post2`, or `/post3` and choose a saved channel.
+5. Follow the prompts, review the preview, then publish.
 
-For `/post2`, send the destination channel, then send up to 50 photos. Each photo is added to the same slideshow. Use `/undo` to remove the last photo, then `/done` or the inline Done button to finish. Choose whether to add a description or skip it, review, then publish. The bot sends exactly one Rich Message whose structure is `blockquote → slideshow → photo blocks`. The optional description is the slideshow caption. This is not a `sendMediaGroup` album and it does not split into multiple messages.
+For `/post2`, choose a saved channel, send up to 50 photos, then use `/done` or the inline Done button. Add an optional description or skip it, review, then publish. It sends one Rich Message with the slideshow inside one block quote.
+
+For `/post3`, choose a saved channel, select **Plain text** or **Small heading (h6)**, enter the text that appears outside and above the quote, then send up to 50 photos. Finish with `/done`, add or skip the slideshow description, review, and publish. The bot sends exactly one Rich Message with this structure: `paragraph/heading → blockquote → slideshow → photo blocks`. The description is the slideshow caption, so it remains inside the quote with the slideshow. This is not a `sendMediaGroup` album and it does not split into multiple messages.
 
 The bot must be an administrator in the destination channel with permission to publish messages.
 
 ## Notes
 
-- Draft sessions are stored in memory. A Render restart clears unfinished drafts.
+- Saved channels and active drafts are stored in Supabase. Drafts are scoped to each allowed Telegram account and restored after a Render restart.
 - Button colors depend on the Telegram client and theme.
 - Rich Messages require a Telegram Bot API server that supports `sendRichMessage`.
+
+
+## Supabase setup for saved channels and drafts
+
+The connected Supabase project has already been provisioned with the tables defined in `supabase/migrations/20261113153402_post_builder_storage.sql`. For a fresh project, apply that migration before deploying.
+
+In the Render service environment, set:
+- `SUPABASE_URL`: the project URL.
+- `SUPABASE_SECRET_KEY`: a Supabase secret key. The legacy `SUPABASE_SERVICE_ROLE_KEY` variable is also accepted.
+
+Keep this key only in Render's server-side environment. Never put it in the repository or expose it to a client app. Deploy `feature/post3-supabase` only after verifying the required environment variables.
+
+Channel and draft queries are always scoped by the Telegram sender ID. The service-role key is used only by the server; do not expose it to users or frontend code.
+
+## New commands
+
+- `/channels`: list and remove channels saved by the current Telegram account.
+- `/addchannel`: register a public channel by username. The bot must be an administrator with posting permission.
+- `/post3`: create a text-plus-slideshow Rich Message. The text is a paragraph or an h6 heading above the slideshow; the slideshow remains inside one block quote.
+
+Each allowed Telegram account has a separate channel list and one persistent active draft. The stored numeric channel ID is used for publishing, so a later username change does not change the destination.

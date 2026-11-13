@@ -15,3 +15,7 @@ services:
         sync: false
       - key: WEBHOOK_SECRET
         generateValue: true
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
