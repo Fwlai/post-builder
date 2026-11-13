@@ -459,7 +459,7 @@ bot.command("done", async (ctx) => {
   if (!isAllowed(ctx)) return ctx.reply("You are not authorized to use this bot.");
   const session = getSession(ctx);
   if (!session || !["albumCollect", "post3Collect"].includes(session.stage)) {
-    return ctx.reply("There is no slideshow currently collecting photos. Send /post2 to start.");
+    return ctx.reply("There is no slideshow currently collecting photos. Send /post2 or /post3 to start.");
   }
   if (session.photoFileIds.length === 0) {
     return ctx.reply("Send at least one photo before finishing.");
