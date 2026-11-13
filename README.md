@@ -56,3 +56,23 @@ The bot must be an administrator in the destination channel with permission to p
 - Draft sessions are stored in memory. A Render restart clears unfinished drafts.
 - Button colors depend on the Telegram client and theme.
 - Rich Messages require a Telegram Bot API server that supports `sendRichMessage`.
+
+
+## Supabase setup for saved channels and drafts
+
+1. Create a Supabase project.
+2. In the Supabase SQL Editor, run the migration at `supabase/migrations/202611130001_post_builder_workspaces.sql`.
+3. In the Render service environment, add:
+   - `SUPABASE_URL`: the project's URL.
+   - `SUPABASE_SERVICE_ROLE_KEY`: the project's service-role key. Keep this secret and never put it in the repository or a client app.
+4. Deploy the `feature/post3-channel-workspaces` branch only after checking the changes.
+
+Channel and draft queries are always scoped by the Telegram sender ID. The service-role key is used only by the server; do not expose it to users or frontend code.
+
+## New commands
+
+- `/channels`: list and remove channels saved by the current Telegram account.
+- `/addchannel`: register a public channel by username. The bot must be an administrator with posting permission.
+- `/post3`: create a text-plus-slideshow Rich Message. The text is a paragraph or an h6 heading above the slideshow; the slideshow remains inside one block quote.
+
+Each allowed Telegram account has a separate channel list and one persistent active draft. The stored numeric channel ID is used for publishing, so a later username change does not change the destination.
