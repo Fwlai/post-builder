@@ -75,7 +75,9 @@ async function loadDraft(ownerUserId) {
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
-  return { ...data.payload, type: data.draft_type, stage: data.stage };
+  const payload = { ...data.payload };
+  if (payload.publishing) payload.publishing = false;
+  return { ...payload, type: data.draft_type, stage: data.stage };
 }
 
 async function saveDraft(ownerUserId, session) {
