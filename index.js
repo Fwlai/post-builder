@@ -1,6 +1,7 @@
 const express = require("express");
 const { Telegraf } = require("telegraf");
 const crypto = require("crypto");
+const { listChannels, addChannel, deleteChannel, getChannel, loadDraft, saveDraft, deleteDraft } = require("./storage");
 
 const TOKEN = process.env.BOT_TOKEN;
 const PUBLIC_URL = String(process.env.PUBLIC_URL || "").replace(/\/$/, "");
@@ -21,6 +22,8 @@ if (!PUBLIC_URL || !/^https:\/\//i.test(PUBLIC_URL)) {
 const bot = new Telegraf(TOKEN);
 const app = express();
 const sessions = new Map();
+const hydratedUsers = new Set();
+const persistenceQueues = new Map();
 const webhookPath = "/telegram/" + WEBHOOK_SECRET;
 
 const COLOR_LABELS = {
@@ -77,10 +80,20 @@ bot.use(async (ctx, next) => {
     }
 
     if (!isAllowed(ctx)) {
-      if (isStart) {
-        await ctx.reply("Sorry, This bot is private.");
-      }
+      if (isStart) await ctx.reply("Sorry, This bot is private.");
       return;
+    }
+
+    if (!hydratedUsers.has(currentUserId)) {
+      try {
+        const savedDraft = await loadDraft(currentUserId);
+        if (savedDraft) sessions.set(currentUserId, savedDraft);
+        hydratedUsers.add(currentUserId);
+      } catch (error) {
+        console.error("Failed to restore the user draft:", errorDescription(error));
+        await ctx.reply("Storage is temporarily unavailable. Please try again shortly.");
+        return;
+      }
     }
   }
 
@@ -91,12 +104,64 @@ function getSession(ctx) {
   return sessions.get(userKey(ctx));
 }
 
+function queuePersistence(owner, operation) {
+  const previous = persistenceQueues.get(owner) || Promise.resolve();
+  const next = previous.catch(() => {}).then(operation);
+  persistenceQueues.set(owner, next);
+  next.catch((error) => console.error("Draft persistence failed:", errorDescription(error)));
+  return next;
+}
+
 function setSession(ctx, session) {
-  sessions.set(userKey(ctx), session);
+  const owner = userKey(ctx);
+  sessions.set(owner, session);
+  if (session.type !== "channel-management") {
+    queuePersistence(owner, () => saveDraft(owner, session));
+  }
 }
 
 function clearSession(ctx) {
-  sessions.delete(userKey(ctx));
+  const owner = userKey(ctx);
+  const previous = sessions.get(owner);
+  sessions.delete(owner);
+  if (previous && previous.type === "channel-management") {
+    queuePersistence(owner, async () => {
+      const saved = await loadDraft(owner);
+      if (saved) sessions.set(owner, saved);
+    });
+  } else {
+    queuePersistence(owner, () => deleteDraft(owner));
+  }
+}
+
+async function showChannelPicker(ctx) {
+  const channels = await listChannels(userKey(ctx));
+  if (!channels.length) {
+    return ctx.reply("You have no saved channels yet. Send /addchannel to register one.");
+  }
+  const rows = channels.map((channel) => [{
+    text: channel.title + (channel.username ? " (" + channel.username + ")" : ""),
+    callback_data: "ch:use:" + channel.id
+  }]);
+  rows.push([{ text: "Add a channel", callback_data: "ch:add" }]);
+  rows.push([{ text: "Cancel", callback_data: "ch:cancel" }]);
+  return ctx.reply("Choose a saved destination channel:", {
+    reply_markup: { inline_keyboard: rows }
+  });
+}
+
+async function beginDraft(ctx, type) {
+  const session = {
+    type,
+    stage: "chooseChannel",
+    nextStage: type === "post2" ? "albumCollect" : type === "post3" ? "post3Mode" : "body",
+    channel: "",
+    channelRecordId: "",
+    ...(type === "post" ? { body: "", buttonText: "", buttonUrl: "", color: "none" } : {}),
+    ...(type === "post2" || type === "post3" ? { photoFileIds: [], description: "" } : {})
+  };
+  setSession(ctx, session);
+  return showChannelPicker(ctx);
 }
 
 function parseMessageLink(input) {
@@ -186,6 +251,7 @@ function slideshowPreview(session) {
     "Channel: " + session.channel,
     "Photos: " + session.photoFileIds.length,
     "Format: One Rich Message (slideshow inside block quote)",
+    ...(session.type === "post3" ? ["Top text (" + (session.textMode === "heading" ? "h6 heading" : "paragraph") + "): " + session.topText] : []),
     "Description: " + (session.description || "(none)"),
     "",
     "Publish this slideshow?"
@@ -226,12 +292,20 @@ function buildRichSlideshow(session) {
     slideshow.caption = { text: session.description };
   }
 
-  return {
-    blocks: [{
-      type: "blockquote",
-      blocks: [slideshow]
-    }]
-  };
+  const blocks = [];
+  if (session.type === "post3") {
+    if (!session.topText || !["paragraph", "heading"].includes(session.textMode)) {
+      throw new Error("The top text is missing or its format is invalid.");
+    }
+    blocks.push(session.textMode === "heading"
+      ? { type: "heading", size: 6, text: session.topText }
+      : { type: "paragraph", text: session.topText });
+  }
+  blocks.push({
+    type: "blockquote",
+    blocks: [slideshow]
+  });
+  return { blocks };
 }
 
 async function sendRichSlideshow(session) {
@@ -334,7 +408,10 @@ bot.start(async (ctx) => {
     "/done - Finish collecting slideshow photos\n" +
     "/undo - Remove the last collected slideshow photo\n" +
     "/cancel - Cancel the current draft\n\n" +
-    "Use /post to build a URL-button post or /post2 to build a quoted photo slideshow."
+    "/post3 - Add text above a quoted photo slideshow\n" +
+    "/channels - Manage your saved channels\n" +
+    "/addchannel - Register a channel\n\n" +
+    "Use /post, /post2, or /post3 to create a post."
   );
 });
 
@@ -342,19 +419,7 @@ bot.command("post", async (ctx) => {
   if (ctx.chat.type !== "private") return ctx.reply("Use this command in a private chat.");
   if (!isAllowed(ctx)) return ctx.reply("You are not authorized to use this bot.");
 
-  setSession(ctx, {
-    stage: "channel",
-    channel: "",
-    body: "",
-    buttonText: "",
-    buttonUrl: "",
-    color: "none"
-  });
-
-  await ctx.reply(
-    "Step 1 of 5\n\nSend the destination public channel link or username.\n\n" +
-    "Examples:\nhttps://t.me/channelname\n@channelname"
-  );
+  await beginDraft(ctx, "post");
 });
 
 
@@ -362,26 +427,39 @@ bot.command("post2", async (ctx) => {
   if (ctx.chat.type !== "private") return ctx.reply("Use this command in a private chat.");
   if (!isAllowed(ctx)) return ctx.reply("You are not authorized to use this bot.");
 
-  setSession(ctx, {
-    stage: "albumChannel",
-    channel: "",
-    photoFileIds: [],
-    description: ""
-  });
+  await beginDraft(ctx, "post2");
+});
 
-  await ctx.reply(
-    "Slideshow builder\n\nStep 1: Send the destination public channel link or @username.\n\n" +
-    "Then send up to 50 photos. Each photo is added to one Rich Message slideshow. " +
-    "Use /done or the Done button when finished. Use /undo to remove the last photo."
-  );
+
+bot.command("post3", async (ctx) => {
+  if (ctx.chat.type !== "private") return ctx.reply("Use this command in a private chat.");
+  if (!isAllowed(ctx)) return ctx.reply("You are not authorized to use this bot.");
+  await beginDraft(ctx, "post3");
+});
+
+bot.command("addchannel", async (ctx) => {
+  if (ctx.chat.type !== "private" || !isAllowed(ctx)) return;
+  const session = { type: "channel-management", stage: "registerChannel" };
+  setSession(ctx, session);
+  await ctx.reply("Send the public channel @username or https://t.me/channelname. The bot must be an administrator with permission to post.");
+});
+
+bot.command("channels", async (ctx) => {
+  if (ctx.chat.type !== "private" || !isAllowed(ctx)) return;
+  const channels = await listChannels(userKey(ctx));
+  if (!channels.length) return ctx.reply("No saved channels. Use /addchannel to add one.");
+  const lines = channels.map((c, i) => (i + 1) + ". " + c.title + (c.username ? " (" + c.username + ")" : "") + "\nID: " + c.chat_id);
+  const rows = channels.map((c) => [{ text: "Delete " + c.title, callback_data: "ch:delete:" + c.id }]);
+  rows.push([{ text: "Add channel", callback_data: "ch:add" }]);
+  await ctx.reply("Your saved channels:\n\n" + lines.join("\n\n"), { reply_markup: { inline_keyboard: rows } });
 });
 
 bot.command("done", async (ctx) => {
   if (ctx.chat.type !== "private") return;
   if (!isAllowed(ctx)) return ctx.reply("You are not authorized to use this bot.");
   const session = getSession(ctx);
-  if (!session || session.stage !== "albumCollect") {
-    return ctx.reply("There is no slideshow currently collecting photos. Send /post2 to start.");
+  if (!session || !["albumCollect", "post3Collect"].includes(session.stage)) {
+    return ctx.reply("There is no slideshow currently collecting photos. Send /post2 or /post3 to start.");
   }
   if (session.photoFileIds.length === 0) {
     return ctx.reply("Send at least one photo before finishing.");
@@ -402,7 +480,7 @@ bot.command("undo", async (ctx) => {
   if (ctx.chat.type !== "private") return ctx.reply("Use this command in a private chat.");
   if (!isAllowed(ctx)) return ctx.reply("You are not authorized to use this bot.");
   const session = getSession(ctx);
-  if (!session || session.stage !== "albumCollect") {
+  if (!session || !["albumCollect", "post3Collect"].includes(session.stage)) {
     return ctx.reply("There is no slideshow currently collecting photos.");
   }
   if (!session.photoFileIds.length) return ctx.reply("There are no photos to remove.");
@@ -414,7 +492,7 @@ bot.command("undo", async (ctx) => {
 bot.on("photo", async (ctx, next) => {
   if (ctx.chat.type !== "private" || !isAllowed(ctx)) return next();
   const session = getSession(ctx);
-  if (!session || session.stage !== "albumCollect") return next();
+  if (!session || !["albumCollect", "post3Collect"].includes(session.stage)) return next();
 
   if (session.photoFileIds.length >= 50) {
     return ctx.reply("This slideshow has reached Telegram's 50-photo Rich Message limit. Use /done to continue or /undo to remove the last photo.");
@@ -453,6 +531,33 @@ bot.on("text", async (ctx, next) => {
   if (text.startsWith("/") && !/^\/skip(?:@\w+)?$/i.test(text)) return next();
 
   try {
+
+    if (session.stage === "registerChannel") {
+      const parsed = parseChannel(text);
+      if (parsed.replyTo) throw new Error("Send the channel username or channel link, not a message link.");
+      const chat = await ctx.telegram.getChat(parsed.channel);
+      const me = await ctx.telegram.getMe();
+      const member = await ctx.telegram.getChatMember(chat.id, me.id);
+      if (!["administrator", "creator"].includes(member.status)) {
+        throw new Error("The bot is not an administrator in that channel. Add it as an admin first.");
+      }
+      if (member.status === "administrator" && member.can_post_messages === false) {
+        throw new Error("The bot is an admin but does not have permission to post messages.");
+      }
+      const username = chat.username ? "@" + chat.username : null;
+      await addChannel(userKey(ctx), { chatId: chat.id, username, title: chat.title || username || String(chat.id) });
+      clearSession(ctx);
+      return ctx.reply("Channel saved to this account: " + (chat.title || username) + "\nNumeric chat ID stored: " + chat.id);
+    }
+
+    if (session.stage === "post3Text") {
+      if (!text || text.startsWith("/")) return ctx.reply("Send the top text, or use /cancel to discard the draft.");
+      if ([...text].length > 4096) return ctx.reply("Top text must be 4096 characters or fewer.");
+      session.topText = text;
+      session.stage = "post3Collect";
+      setSession(ctx, session);
+      return ctx.reply("Top text saved. Now send up to 50 photos for the slideshow. Use /done when finished.");
+    }
 
     if (session.stage === "albumChannel") {
       const parsed = parseChannel(text);
@@ -551,16 +656,54 @@ bot.on("text", async (ctx, next) => {
 
 bot.on("callback_query", async (ctx, next) => {
   const data = String((ctx.callbackQuery && ctx.callbackQuery.data) || "");
-  if (!data.startsWith("pb:") && !data.startsWith("pb2:")) return next();
+  if (!data.startsWith("pb:") && !data.startsWith("pb2:") && !data.startsWith("pb3:") && !data.startsWith("ch:")) return next();
 
   try {
     await ctx.answerCbQuery();
     if (ctx.chat && ctx.chat.type !== "private") return;
     if (!isAllowed(ctx)) return;
 
-    const session = getSession(ctx);
-    if (!session) return ctx.reply("Draft expired. Send /post or /post2 to start again.");
+    if (data === "ch:cancel") {
+      clearSession(ctx);
+      return ctx.reply("Draft cancelled.");
+    }
+    if (data === "ch:add") {
+      setSession(ctx, { type: "channel-management", stage: "registerChannel" });
+      return ctx.reply("Send the public channel @username or https://t.me/channelname. The bot must be an administrator with posting rights.");
+    }
+    if (data.startsWith("ch:delete:")) {
+      const removed = await deleteChannel(userKey(ctx), data.slice("ch:delete:".length));
+      return ctx.reply(removed ? "Channel removed from your saved list." : "That saved channel was not found in your account.");
+    }
+    if (data.startsWith("ch:use:")) {
+      const session = getSession(ctx);
+      if (!session || session.stage !== "chooseChannel") return ctx.reply("Start a post first with /post, /post2, or /post3.");
+      const channel = await getChannel(userKey(ctx), data.slice("ch:use:".length));
+      if (!channel) return ctx.reply("That channel is not saved in your account.");
+      session.channel = String(channel.chat_id);
+      session.channelRecordId = channel.id;
+      session.channelTitle = channel.title;
+      session.stage = session.nextStage;
+      delete session.nextStage;
+      setSession(ctx, session);
+      if (session.type === "post") return ctx.reply("Destination: " + channel.title + "\n\nStep 1: Send the post text, or /skip for a button-only post.");
+      if (session.type === "post2") return ctx.reply("Destination: " + channel.title + "\n\nNow send up to 50 photos. Use /done when finished.");
+      return ctx.reply("Destination: " + channel.title + "\n\nChoose the format for the top text:", { reply_markup: { inline_keyboard: [[
+        { text: "Plain text", callback_data: "pb3:plain" },
+        { text: "Small heading (h6)", callback_data: "pb3:heading" }
+      ], [{ text: "Cancel", callback_data: "ch:cancel" }]] } });
+    }
 
+    const session = getSession(ctx);
+    if (!session) return ctx.reply("Draft expired. Send /post, /post2, or /post3 to start again.");
+
+    if (data === "pb3:plain" || data === "pb3:heading") {
+      if (session.type !== "post3" || session.stage !== "post3Mode") return ctx.reply("Text format selection is not active.");
+      session.textMode = data === "pb3:heading" ? "heading" : "paragraph";
+      session.stage = "post3Text";
+      setSession(ctx, session);
+      return ctx.reply("Send the text that should appear above the quoted slideshow.");
+    }
 
     if (data.startsWith("pb2:")) {
       if (data === "pb2:cancel") {
@@ -568,14 +711,14 @@ bot.on("callback_query", async (ctx, next) => {
         return ctx.reply("Slideshow cancelled.");
       }
       if (data === "pb2:undo") {
-        if (session.stage !== "albumCollect") return ctx.reply("Photo collection is not active.");
+        if (!["albumCollect", "post3Collect"].includes(session.stage)) return ctx.reply("Photo collection is not active.");
         if (!session.photoFileIds.length) return ctx.reply("There are no photos to remove.");
         session.photoFileIds.pop();
         setSession(ctx, session);
         return ctx.reply("Removed the last photo. " + session.photoFileIds.length + " photo(s) remain.");
       }
       if (data === "pb2:done") {
-        if (session.stage !== "albumCollect") return ctx.reply("Photo collection is not active.");
+        if (!["albumCollect", "post3Collect"].includes(session.stage)) return ctx.reply("Photo collection is not active.");
         if (!session.photoFileIds.length) return ctx.reply("Send at least one photo first.");
         session.stage = "albumDescriptionChoice";
         setSession(ctx, session);
