@@ -658,7 +658,10 @@ bot.on("callback_query", async (ctx, next) => {
     if (ctx.chat && ctx.chat.type !== "private") return;
     if (!isAllowed(ctx)) return;
 
-    if (data === "ch:cancel") return ctx.reply("Cancelled.");
+    if (data === "ch:cancel") {
+      clearSession(ctx);
+      return ctx.reply("Draft cancelled.");
+    }
     if (data === "ch:add") {
       setSession(ctx, { type: "channel-management", stage: "registerChannel" });
       return ctx.reply("Send the public channel @username or https://t.me/channelname. The bot must be an administrator with posting rights.");
