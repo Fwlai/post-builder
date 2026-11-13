@@ -13,7 +13,7 @@ const supabase = createClient(url, serviceRoleKey, {
 
 function ownerId(value) {
   const id = String(value || "");
-  if (!/^\\d+$/.test(id)) throw new Error("Invalid Telegram owner ID.");
+  if (!/^\d+$/.test(id)) throw new Error("Invalid Telegram owner ID.");
   return id;
 }
 
