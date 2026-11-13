@@ -475,7 +475,7 @@ bot.command("undo", async (ctx) => {
   if (ctx.chat.type !== "private") return ctx.reply("Use this command in a private chat.");
   if (!isAllowed(ctx)) return ctx.reply("You are not authorized to use this bot.");
   const session = getSession(ctx);
-  if (!session || session.stage !== "albumCollect") {
+  if (!session || !["albumCollect", "post3Collect"].includes(session.stage)) {
     return ctx.reply("There is no slideshow currently collecting photos.");
   }
   if (!session.photoFileIds.length) return ctx.reply("There are no photos to remove.");
