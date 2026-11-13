@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "express": "^5.1.0",
-    "telegraf": "^4.16.3"
+    "telegraf": "^4.16.3",
+    "@supabase/supabase-js": "2.119.0"
   }
 }
