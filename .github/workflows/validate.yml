@@ -1,0 +1,21 @@
+name: Validate bot source
+
+on:
+  push:
+    branches:
+      - feature/post3-channel-workspaces
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: node --check index.js
+      - run: node --check storage.js
