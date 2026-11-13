@@ -4,7 +4,7 @@ A Telegram bot for publishing channel posts with colored Rich Message URL button
 
 ## Features
 
-- Choose the public destination channel for each post using `@username` or `https://t.me/username`
+- Register destination channels by public `@username`; the bot resolves and stores each numeric Telegram chat ID
 - Optional post text; use `/skip` for a button-only Rich Message
 - Choose the button label and destination URL every time
 - Supports HTTP/HTTPS URLs, including Telegram invite links such as `https://t.me/+...`
@@ -62,7 +62,7 @@ The bot must be an administrator in the destination channel with permission to p
 
 ## Supabase setup for saved channels and drafts
 
-The connected Supabase project has already been provisioned with the tables defined in `supabase/migrations/202611130001_post_builder_workspaces.sql`. For a fresh project, apply that migration before deploying.
+The connected Supabase project has already been provisioned with the tables defined in `supabase/migrations/20261113153402_post_builder_storage.sql`. For a fresh project, apply that migration before deploying.
 
 In the Render service environment, set:
 - `SUPABASE_URL`: the project URL.
