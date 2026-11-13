@@ -124,7 +124,12 @@ function clearSession(ctx) {
   const owner = userKey(ctx);
   const previous = sessions.get(owner);
   sessions.delete(owner);
-  if (!previous || previous.type !== "channel-management") {
+  if (previous && previous.type === "channel-management") {
+    queuePersistence(owner, async () => {
+      const saved = await loadDraft(owner);
+      if (saved) sessions.set(owner, saved);
+    });
+  } else {
     queuePersistence(owner, () => deleteDraft(owner));
   }
 }
