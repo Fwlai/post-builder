@@ -560,7 +560,7 @@ bot.on("text", async (ctx, next) => {
       session.editing = true;
       setSession(ctx, session);
       try {
-        await ctx.telegram.editMessageText(session.editTarget.chatId, session.editTarget.messageId, text);
+        await ctx.telegram.editMessageText(session.editTarget.chatId, session.editTarget.messageId, undefined, text);
         clearSession(ctx);
         return ctx.reply("Post edited successfully. The same message now contains the replacement text.");
       } catch (error) {
