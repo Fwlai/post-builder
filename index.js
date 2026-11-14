@@ -437,6 +437,12 @@ bot.command("post3", async (ctx) => {
   await beginDraft(ctx, "post3");
 });
 
+bot.command("edit", async (ctx) => {
+  if (ctx.chat.type !== "private" || !isAllowed(ctx)) return;
+  setSession(ctx, { type: "edit", stage: "editLink" });
+  return ctx.reply("Send the public Telegram link of the channel post you want to edit.");
+});
+
 bot.command("addchannel", async (ctx) => {
   if (ctx.chat.type !== "private" || !isAllowed(ctx)) return;
   const session = { type: "channel-management", stage: "registerChannel" };
@@ -531,6 +537,38 @@ bot.on("text", async (ctx, next) => {
   if (text.startsWith("/") && !/^\/skip(?:@\w+)?$/i.test(text)) return next();
 
   try {
+
+    if (session.stage === "editLink") {
+      const target = parseMessageLink(text);
+      const chat = await ctx.telegram.getChat(target.chatId);
+      const me = await ctx.telegram.getMe();
+      const member = await ctx.telegram.getChatMember(chat.id, me.id);
+      if (!["administrator", "creator"].includes(member.status) ||
+          (member.status === "administrator" && member.can_edit_messages !== true)) {
+        throw new Error("The bot must be an administrator in that channel with permission to edit messages.");
+      }
+      session.editTarget = { chatId: chat.id, messageId: target.messageId, url: target.url };
+      session.stage = "editText";
+      setSession(ctx, session);
+      return ctx.reply("Post found. Send the replacement text. The original Rich Message content and media will be replaced.");
+    }
+
+    if (session.stage === "editText") {
+      if (!text || text.startsWith("/")) return ctx.reply("Send the replacement text, or /cancel to stop.");
+      if ([...text].length > 4096) return ctx.reply("Replacement text must be 4096 characters or fewer.");
+      if (session.editing) return ctx.reply("This edit is already being processed.");
+      session.editing = true;
+      setSession(ctx, session);
+      try {
+        await ctx.telegram.editMessageText(session.editTarget.chatId, session.editTarget.messageId, text);
+        clearSession(ctx);
+        return ctx.reply("Post edited successfully. The same message now contains the replacement text.");
+      } catch (error) {
+        session.editing = false;
+        setSession(ctx, session);
+        return ctx.reply("Edit failed: " + errorDescription(error) + "\\n\\nYour edit session is still available. Send a new replacement text or /cancel.");
+      }
+    }
 
     if (session.stage === "registerChannel") {
       const parsed = parseChannel(text);
