@@ -1,4 +1,6 @@
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
 const { Telegraf } = require("telegraf");
 const crypto = require("crypto");
 const { listChannels, addChannel, deleteChannel, getChannel, loadDraft, saveDraft, deleteDraft } = require("./storage");
@@ -398,6 +400,29 @@ async function sendRichPost(session) {
   return data.result;
 }
 
+bot.command("wid", async (ctx) => {
+  if (!ctx.chat || ctx.chat.type !== "private") {
+    return ctx.reply("Use /wid in a private chat with me.");
+  }
+  if (!isAllowed(ctx)) {
+    return ctx.reply("You are not authorized to use this bot.");
+  }
+
+  try {
+    const html = fs.readFileSync(path.join(__dirname, "snake-widget.html"), "utf8");
+    await bot.telegram.callApi("sendWidget", {
+      chat_id: ctx.chat.id,
+      html,
+      width: 320,
+      height: 470,
+      caption: "SNAKE · Eat the golden orbs, grow longer, and try not to bite yourself."
+    });
+  } catch (error) {
+    console.error("Failed to send Snake widget:", errorDescription(error));
+    await ctx.reply("Couldn't send the Snake widget: " + errorDescription(error).slice(0, 700));
+  }
+});
+
 bot.start(async (ctx) => {
   if (ctx.chat.type !== "private") return;
   if (!isAllowed(ctx)) return ctx.reply("You are not authorized to use this bot.");
@@ -409,9 +434,10 @@ bot.start(async (ctx) => {
     "/undo - Remove the last collected slideshow photo\n" +
     "/cancel - Cancel the current draft\n\n" +
     "/post3 - Add text above a quoted photo slideshow\n" +
+    "/wid - Play a tiny Snake game widget\n" +
     "/channels - Manage your saved channels\n" +
     "/addchannel - Register a channel\n\n" +
-    "Use /post, /post2, or /post3 to create a post."
+    "Use /post, /post2, or /post3 to create a post, or /wid to play Snake."
   );
 });
 
