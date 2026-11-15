@@ -53,6 +53,10 @@ For `/post3`, choose a saved channel, select **Plain text** or **Small heading (
 
 The bot must be an administrator in the destination channel with permission to publish messages.
 
+## Experimental widget
+
+- `/wid`: sends a lightweight, self-contained Snake game as a Telegram HTML Widget in the private chat with the bot. The game runs locally and independently on each viewer's device; it does not need a database or a live Render connection while being played. Telegram's current production rollout only allows bots to send widgets in private chats, not channels or groups.
+
 ## Notes
 
 - Saved channels and active drafts are stored in Supabase. Drafts are scoped to each allowed Telegram account and restored after a Render restart.
