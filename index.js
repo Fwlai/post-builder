@@ -900,17 +900,35 @@ app.post(webhookPath, express.json({ limit: "1mb" }), async (req, res) => {
   }
 });
 
-app.listen(PORT, "0.0.0.0", async () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log("Post Builder listening on port " + PORT);
-  try {
-    await bot.telegram.setWebhook(PUBLIC_URL + webhookPath, {
-      secret_token: WEBHOOK_SECRET
-    });
-    console.log("Telegram webhook configured.");
-  } catch (error) {
-    console.error("Failed to configure Telegram webhook:", errorDescription(error));
-    process.exit(1);
-  }
+
+  let webhookRetryDelay = 5000;
+  const maxWebhookRetryDelay = 60000;
+
+  const configureWebhook = async () => {
+    try {
+      await bot.telegram.setWebhook(PUBLIC_URL + webhookPath, {
+        secret_token: WEBHOOK_SECRET
+      });
+      console.log("Telegram webhook configured.");
+      webhookRetryDelay = 5000;
+    } catch (error) {
+      console.error(
+        "Failed to configure Telegram webhook:",
+        errorDescription(error),
+        "- retrying in " + Math.round(webhookRetryDelay / 1000) + "s"
+      );
+
+      const jitter = Math.floor(Math.random() * 1000);
+      const delay = webhookRetryDelay + jitter;
+      webhookRetryDelay = Math.min(webhookRetryDelay * 2, maxWebhookRetryDelay);
+
+      setTimeout(configureWebhook, delay);
+    }
+  };
+
+  configureWebhook();
 });
 
 process.once("SIGINT", () => bot.telegram.deleteWebhook().finally(() => process.exit(0)));
