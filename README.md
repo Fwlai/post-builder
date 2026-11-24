@@ -14,6 +14,8 @@ A Telegram bot for publishing channel posts with colored Rich Message URL button
 - Private bot access restricted to Telegram user IDs `6530793575` and `5272351424`
 - `/post2` photo slideshow builder with an optional description and inline Done/Cancel controls
 - `/post3` text-plus-slideshow builder with paragraph or h6 heading above a quoted slideshow
+- `/edit` replaces an existing channel post in place with the same Rich Message slideshow format, preserving the original message ID
+- Supports public message links and private channel links (`t.me/c/...`) for `/edit`
 - Per-account saved channel workspaces using numeric Telegram chat IDs
 - Persistent drafts stored in Supabase and restored after Render restarts
 - Each `/post2` draft is published as exactly one `sendRichMessage` containing one `blockquote` with one nested `slideshow` block
@@ -47,11 +49,20 @@ In a private chat with the bot:
 4. Send `/post`, `/post2`, or `/post3` and choose a saved channel.
 5. Follow the prompts, review the preview, then publish.
 
+To turn an existing channel post into a Rich Message slideshow, use `/edit` in the private bot chat:
+1. Send the public post link (for example `https://t.me/channelname/39`) or private channel link (for example `https://t.me/c/123456789/39`).
+2. The bot verifies that it is an administrator in that channel and has the **Edit messages** permission (`can_edit_messages`).
+3. Send up to 50 photos, then use `/done`.
+4. Add an optional slideshow description or skip it, review the target post and preview, then press **Publish**.
+5. The bot calls Bot API `editMessageText` with `rich_message`. The original post is replaced in place; it does not create a second channel message, and the original message ID is preserved.
+
+The original post's text/content is replaced by the slideshow. Telegram validates the target message when the final edit is submitted, because the Bot API does not provide a method to fetch an arbitrary message by its link.
+
 For `/post2`, choose a saved channel, send up to 50 photos, then use `/done` or the inline Done button. Add an optional description or skip it, review, then publish. It sends one Rich Message with the slideshow inside one block quote.
 
 For `/post3`, choose a saved channel, select **Plain text** or **Small heading (h6)**, enter the text that appears outside and above the quote, then send up to 50 photos. Finish with `/done`, add or skip the slideshow description, review, and publish. The bot sends exactly one Rich Message with this structure: `paragraph/heading → blockquote → slideshow → photo blocks`. The description is the slideshow caption, so it remains inside the quote with the slideshow. This is not a `sendMediaGroup` album and it does not split into multiple messages.
 
-The bot must be an administrator in the destination channel with permission to publish messages.
+The bot must be an administrator in the destination channel with permission to publish messages. For `/edit`, it needs the channel's **Edit messages** permission (`can_edit_messages`) so it can replace posts written by other administrators or users.
 
 ## Experimental widget
 
