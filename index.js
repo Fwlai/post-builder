@@ -897,10 +897,19 @@ bot.on("callback_query", async (ctx, next) => {
         } catch (error) {
           session.publishing = false;
           setSession(ctx, session);
+          const isEdit = session.type === "edit";
           const timeoutNote = error && (error.name === "TimeoutError" || error.name === "AbortError")
-            ? "\n\nThe request timed out. Telegram may still have received it, so check the channel before retrying to avoid a duplicate."
+            ? (isEdit
+              ? "\n\nThe request timed out. The edit may still have completed. Check the target post before retrying."
+              : "\n\nThe request timed out. Telegram may still have received it, so check the channel before retrying to avoid a duplicate.")
             : "";
-          return ctx.reply("Publishing failed:\n\n" + errorDescription(error) + timeoutNote + "\n\nYour slideshow draft has been kept. Press Publish to retry or send /cancel.");
+          return ctx.reply(
+            (isEdit ? "Edit failed:\n\n" : "Publishing failed:\n\n") +
+            errorDescription(error) + timeoutNote +
+            (isEdit
+              ? "\n\nYour edit draft has been kept. Press Publish to retry or send /cancel."
+              : "\n\nYour slideshow draft has been kept. Press Publish to retry or send /cancel.")
+          );
         }
       }
     }
