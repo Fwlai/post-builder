@@ -168,19 +168,32 @@ async function beginDraft(ctx, type) {
 
 function parseMessageLink(input) {
   const raw = String(input || "").trim();
-  const match = raw.match(/^https?:\/\/(?:www\.)?(?:t\.me|telegram\.me)\/([A-Za-z][A-Za-z0-9_]{4,31})\/(\d+)(?:[/?#].*)?$/i);
+  const match = raw.match(
+    /^https?:\/\/(?:www\.)?(?:t\.me|telegram\.me)\/(?:(?:c\/(\d+)\/(?:\d+\/)?(\d+))|(?:s\/)?([A-Za-z][A-Za-z0-9_]{4,31})\/(\d+))(?:[/?#].*)?$/i
+  );
   if (!match) {
-    throw new Error("Send a public Telegram message link like https://t.me/channelname/39.");
+    throw new Error(
+      "Send a public or private channel message link, such as https://t.me/channelname/39 or https://t.me/c/123456789/39."
+    );
   }
-  const messageId = Number(match[2]);
+
+  const privateChannelId = match[1] || null;
+  const messageId = Number(privateChannelId ? match[2] : match[4]);
   if (!Number.isSafeInteger(messageId) || messageId < 1) {
     throw new Error("The message ID in that link is invalid.");
   }
-  return {
-    chatId: "@" + match[1],
-    messageId,
-    url: raw
-  };
+
+  let chatId;
+  if (privateChannelId) {
+    if (!Number.isSafeInteger(Number(privateChannelId)) || Number(privateChannelId) < 1) {
+      throw new Error("The private channel ID in that link is invalid.");
+    }
+    chatId = "-100" + privateChannelId;
+  } else {
+    chatId = "@" + match[3];
+  }
+
+  return { chatId, messageId, url: raw };
 }
 
 function parseChannel(input) {
@@ -247,16 +260,18 @@ function preview(session) {
 }
 
 function slideshowPreview(session) {
+  const editing = session.type === "edit";
   return [
-    "SLIDESHOW PREVIEW",
+    editing ? "EDIT PREVIEW" : "SLIDESHOW PREVIEW",
     "",
-    "Channel: " + session.channel,
+    editing ? "Target post: " + session.editTarget.url : "Channel: " + session.channel,
+    ...(editing ? ["Message ID: " + session.editTarget.messageId, "Action: Replace this message in place"] : []),
     "Photos: " + session.photoFileIds.length,
     "Format: One Rich Message (slideshow inside block quote)",
     ...(session.type === "post3" ? ["Top text (" + (session.textMode === "heading" ? "h6 heading" : "paragraph") + "): " + session.topText] : []),
     "Description: " + (session.description || "(none)"),
     "",
-    "Publish this slideshow?"
+    editing ? "Replace the original post with this slideshow?" : "Publish this slideshow?"
   ].join("\n");
 }
 
@@ -335,6 +350,44 @@ async function sendRichSlideshow(session) {
     throw new Error("Telegram reported success but returned no message result.");
   }
   return data.result;
+}
+
+async function editRichSlideshow(session) {
+  if (!session.editTarget || !session.editTarget.chatId || !session.editTarget.messageId) {
+    throw new Error("The target message is missing. Restart with /edit.");
+  }
+
+  const response = await fetch("https://api.telegram.org/bot" + TOKEN + "/editMessageText", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      chat_id: session.editTarget.chatId,
+      message_id: session.editTarget.messageId,
+      rich_message: buildRichSlideshow(session)
+    }),
+    signal: AbortSignal.timeout(30000)
+  });
+
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error("Telegram returned a non-JSON response (HTTP " + response.status + ").");
+  }
+
+  if (!response.ok || !data || !data.ok) {
+    throw new Error("Telegram API " + response.status + ": " + ((data && data.description) || "Unknown API error"));
+  }
+
+  const editedMessage = data.result;
+  if (
+    editedMessage &&
+    typeof editedMessage === "object" &&
+    Number(editedMessage.message_id) !== Number(session.editTarget.messageId)
+  ) {
+    throw new Error("Telegram returned a different message ID than the target. The result was not accepted.");
+  }
+  return editedMessage;
 }
 
 function previewKeyboard() {
@@ -434,6 +487,7 @@ bot.start(async (ctx) => {
     "/undo - Remove the last collected slideshow photo\n" +
     "/cancel - Cancel the current draft\n\n" +
     "/post3 - Add text above a quoted photo slideshow\n" +
+    "/edit - Replace an existing channel post with a Rich Message slideshow\n" +
     "/wid - Play a tiny Snake game widget\n" +
     "/channels - Manage your saved channels\n" +
     "/addchannel - Register a channel\n\n" +
@@ -465,8 +519,16 @@ bot.command("post3", async (ctx) => {
 
 bot.command("edit", async (ctx) => {
   if (ctx.chat.type !== "private" || !isAllowed(ctx)) return;
-  setSession(ctx, { type: "edit", stage: "editLink" });
-  return ctx.reply("Send the public Telegram link of the channel post you want to edit.");
+  setSession(ctx, {
+    type: "edit",
+    stage: "editLink",
+    photoFileIds: [],
+    description: ""
+  });
+  return ctx.reply(
+    "Send the link of the channel post you want to replace. Public links and private channel links are supported.\n\n" +
+    "Examples:\nhttps://t.me/channelname/39\nhttps://t.me/c/123456789/39"
+  );
 });
 
 bot.command("addchannel", async (ctx) => {
@@ -490,8 +552,8 @@ bot.command("done", async (ctx) => {
   if (ctx.chat.type !== "private") return;
   if (!isAllowed(ctx)) return ctx.reply("You are not authorized to use this bot.");
   const session = getSession(ctx);
-  if (!session || !["albumCollect", "post3Collect"].includes(session.stage)) {
-    return ctx.reply("There is no slideshow currently collecting photos. Send /post2 or /post3 to start.");
+  if (!session || !["albumCollect", "post3Collect", "editCollect"].includes(session.stage)) {
+    return ctx.reply("There is no slideshow currently collecting photos. Send /post2, /post3, or /edit to start.");
   }
   if (session.photoFileIds.length === 0) {
     return ctx.reply("Send at least one photo before finishing.");
@@ -512,7 +574,7 @@ bot.command("undo", async (ctx) => {
   if (ctx.chat.type !== "private") return ctx.reply("Use this command in a private chat.");
   if (!isAllowed(ctx)) return ctx.reply("You are not authorized to use this bot.");
   const session = getSession(ctx);
-  if (!session || !["albumCollect", "post3Collect"].includes(session.stage)) {
+  if (!session || !["albumCollect", "post3Collect", "editCollect"].includes(session.stage)) {
     return ctx.reply("There is no slideshow currently collecting photos.");
   }
   if (!session.photoFileIds.length) return ctx.reply("There are no photos to remove.");
@@ -524,7 +586,7 @@ bot.command("undo", async (ctx) => {
 bot.on("photo", async (ctx, next) => {
   if (ctx.chat.type !== "private" || !isAllowed(ctx)) return next();
   const session = getSession(ctx);
-  if (!session || !["albumCollect", "post3Collect"].includes(session.stage)) return next();
+  if (!session || !["albumCollect", "post3Collect", "editCollect"].includes(session.stage)) return next();
 
   if (session.photoFileIds.length >= 50) {
     return ctx.reply("This slideshow has reached Telegram's 50-photo Rich Message limit. Use /done to continue or /undo to remove the last photo.");
@@ -567,33 +629,36 @@ bot.on("text", async (ctx, next) => {
     if (session.stage === "editLink") {
       const target = parseMessageLink(text);
       const chat = await ctx.telegram.getChat(target.chatId);
+      if (chat.type !== "channel") {
+        throw new Error("That link does not point to a channel post. Use a channel message link.");
+      }
+
       const me = await ctx.telegram.getMe();
       const member = await ctx.telegram.getChatMember(chat.id, me.id);
-      if (!["administrator", "creator"].includes(member.status) ||
-          (member.status === "administrator" && member.can_edit_messages !== true)) {
-        throw new Error("The bot must be an administrator in that channel with permission to edit messages.");
-      }
-      session.editTarget = { chatId: chat.id, messageId: target.messageId, url: target.url };
-      session.stage = "editText";
-      setSession(ctx, session);
-      return ctx.reply("Post found. Send the replacement text. The original Rich Message content and media will be replaced.");
-    }
+      const canEdit = member.status === "creator" ||
+        (member.status === "administrator" && member.can_edit_messages === true);
 
-    if (session.stage === "editText") {
-      if (!text || text.startsWith("/")) return ctx.reply("Send the replacement text, or /cancel to stop.");
-      if ([...text].length > 4096) return ctx.reply("Replacement text must be 4096 characters or fewer.");
-      if (session.editing) return ctx.reply("This edit is already being processed.");
-      session.editing = true;
-      setSession(ctx, session);
-      try {
-        await ctx.telegram.editMessageText(session.editTarget.chatId, session.editTarget.messageId, undefined, text);
-        clearSession(ctx);
-        return ctx.reply("Post edited successfully. The same message now contains the replacement text.");
-      } catch (error) {
-        session.editing = false;
-        setSession(ctx, session);
-        return ctx.reply("Edit failed: " + errorDescription(error) + "\\n\\nYour edit session is still available. Send a new replacement text or /cancel.");
+      if (!canEdit) {
+        throw new Error(
+          "The bot must be an administrator in this channel with the Edit messages permission (can_edit_messages)."
+        );
       }
+
+      session.channel = String(chat.id);
+      session.editTarget = {
+        chatId: chat.id,
+        messageId: target.messageId,
+        url: target.url,
+        channelTitle: chat.title || String(chat.id)
+      };
+      session.stage = "editCollect";
+      setSession(ctx, session);
+      return ctx.reply(
+        "Target channel verified: " + session.editTarget.channelTitle +
+        "\nTarget message ID: " + target.messageId +
+        "\n\nNow send up to 50 photos for the replacement slideshow. Use /done when finished. " +
+        "The original post will remain in place and its content will be replaced after confirmation."
+      );
     }
 
     if (session.stage === "registerChannel") {
@@ -775,14 +840,14 @@ bot.on("callback_query", async (ctx, next) => {
         return ctx.reply("Slideshow cancelled.");
       }
       if (data === "pb2:undo") {
-        if (!["albumCollect", "post3Collect"].includes(session.stage)) return ctx.reply("Photo collection is not active.");
+        if (!["albumCollect", "post3Collect", "editCollect"].includes(session.stage)) return ctx.reply("Photo collection is not active.");
         if (!session.photoFileIds.length) return ctx.reply("There are no photos to remove.");
         session.photoFileIds.pop();
         setSession(ctx, session);
         return ctx.reply("Removed the last photo. " + session.photoFileIds.length + " photo(s) remain.");
       }
       if (data === "pb2:done") {
-        if (!["albumCollect", "post3Collect"].includes(session.stage)) return ctx.reply("Photo collection is not active.");
+        if (!["albumCollect", "post3Collect", "editCollect"].includes(session.stage)) return ctx.reply("Photo collection is not active.");
         if (!session.photoFileIds.length) return ctx.reply("Send at least one photo first.");
         session.stage = "albumDescriptionChoice";
         setSession(ctx, session);
@@ -815,8 +880,18 @@ bot.on("callback_query", async (ctx, next) => {
         setSession(ctx, session);
 
         try {
-          await sendRichSlideshow(session);
           const photoCount = session.photoFileIds.length;
+          if (session.type === "edit") {
+            await editRichSlideshow(session);
+            const targetId = session.editTarget.messageId;
+            clearSession(ctx);
+            return ctx.reply(
+              "Message " + targetId + " was converted to a Rich Message slideshow in place. " +
+              "The original message ID was preserved (" + photoCount + " photo(s))."
+            );
+          }
+
+          await sendRichSlideshow(session);
           clearSession(ctx);
           return ctx.reply("One Rich Message slideshow was published to " + session.channel + " (" + photoCount + " photo(s), inside one block quote).");
         } catch (error) {
